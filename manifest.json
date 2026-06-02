@@ -1,0 +1,10 @@
+{
+	"id": "md-to-typecho",
+	"name": "Markdown to Typecho",
+	"minAppVersion": "1.0.0",
+	"description": "Publish Markdown notes from Obsidian to Typecho blog with native Markdown support",
+	"author": "Yakumo2",
+	"authorUrl": "https://github.com/yakumo2",
+	"version": "0.1.0",
+	"isDesktopOnly": false
+}
