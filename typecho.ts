@@ -120,13 +120,16 @@ export async function updatePost(
 	const headers = apiHeaders();
 	const authorId = parseInt(getSetting('TYPECHO_UID')) || 1;
 
-	const payload = {
+	const payload: Record<string, any> = {
 		cid,
 		title,
 		text: '<!--markdown-->' + markdown,
 		authorId,
 		status,
 	};
+
+	// API 400 时打印详细信息
+	console.log('Update payload:', JSON.stringify(payload, null, 2));
 
 	try {
 		const response = await axios.post<TypechoApiResponse<number>>(
@@ -138,11 +141,14 @@ export async function updatePost(
 			new Notice('文章更新成功！', 5000);
 			return true;
 		}
-		new Notice(`文章更新失败: ${response.data?.message || '未知错误'}`, 5000);
+		const msg = response.data?.message || JSON.stringify(response.data);
+		console.error('更新文章失败, 响应:', response.data);
+		new Notice(`文章更新失败: ${msg}`, 5000);
 		return false;
 	} catch (error: any) {
-		const msg = error?.response?.data?.message || error?.message || '未知错误';
+		const msg = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error?.message || '未知错误';
 		console.error('更新文章失败:', error);
+		if (error?.response?.data) console.error('响应体:', error.response.data);
 		new Notice(`文章更新失败: ${msg}`, 5000);
 		return false;
 	}
