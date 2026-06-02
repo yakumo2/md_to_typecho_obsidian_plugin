@@ -1,6 +1,6 @@
 {
   "name": "md-to-typecho",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Publish Markdown notes from Obsidian to Typecho blog",
   "main": "main.js",
   "type": "module",
