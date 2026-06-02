@@ -4,62 +4,46 @@ import { Notice } from 'obsidian';
 
 // ─── Typecho RESTful API types ────────────────────────────────────
 
+interface TypechoApiResponse<T = any> {
+	status: 'success' | 'error';
+	message: string;
+	data: T;
+}
+
 interface TypechoPost {
 	cid: number;
 	title: string;
 	slug: string;
-	created: number;
-	modified: number;
-	text: string;
-	order: number;
-	authorId: number;
-	template: string;
+	text: string; // rendered HTML
+	permalink: string;
 	type: 'post' | 'page';
-	status: 'publish' | 'draft' | 'private';
-	password: string;
-	commentsNum: number;
-	allowComment: number;
-	allowPing: number;
-	allowFeed: number;
-	parent: number;
-	uid: number;
-	// After API call, categories and tags may be attached
-	categoryIds?: string[];
-	tags?: string[];
+	status?: 'publish' | 'draft' | 'private';
+	password?: string;
+	authorId?: number;
+	created?: number;
+	modified?: number;
 }
 
 interface TypechoCategory {
 	mid: number;
 	name: string;
 	slug: string;
+	type: string;
 	description: string;
 	count: number;
 	order: number;
 	parent: number;
+	permalink: string;
 }
 
 interface TypechoTag {
 	mid: number;
 	name: string;
 	slug: string;
+	type: string;
 	description: string;
 	count: number;
-	order: number;
-	parent: number;
-}
-
-interface CreatePostPayload {
-	title: string;
-	slug: string;
-	markdown: string;       // Typecho RESTful accepts markdown directly
-	text: string;           // Should be same as markdown since Typecho parses it
-	category: string[];     // Category names
-	tags: string[];         // Tag names
-	authorId: number;
-	status: 'publish' | 'draft' | 'private';
-	allowComment: number;
-	allowPing: number;
-	allowFeed: number;
+	permalink: string;
 }
 
 // ─── API helpers ──────────────────────────────────────────────────
@@ -67,8 +51,8 @@ interface CreatePostPayload {
 function apiHeaders() {
 	return {
 		'Content-Type': 'application/json',
-		// Typecho RESTful uses Basic Auth or token in header
-		'Authorization': `Bearer ${getSetting('TYPECHO_TOKEN')}`,
+		// Typecho RESTful 插件使用自定义 token header，不是 Authorization
+		'token': getSetting('TYPECHO_TOKEN'),
 	};
 }
 
@@ -80,44 +64,43 @@ function apiUrl(path: string) {
 
 // ─── Post operations ──────────────────────────────────────────────
 
-/** Create a new post, returns cid on success, null on failure */
+/** Create or update a post, returns cid on success, null on failure */
 export async function createPost(
 	title: string,
 	markdown: string,
 	tags: string[],
-	status: 'publish' | 'draft' = 'publish'
+	status: 'publish' | 'draft' = 'publish',
 ): Promise<number | null> {
 	const headers = apiHeaders();
 	const categories = getCategories();
 	const authorId = parseInt(getSetting('TYPECHO_UID')) || 1;
-	const slug = `post-${Date.now()}`;
 
-	const payload: CreatePostPayload = {
+	// Typecho RESTful 创建/更新走同一个端点 POST /api/post/create
+	// text 必须以 <!--markdown--> 开头才能触发 Markdown 渲染
+	const payload: Record<string, any> = {
 		title,
-		slug,
-		markdown,
-		text: markdown,            // Typecho uses markdown as text
-		category: categories,
-		tags,
+		text: '<!--markdown-->' + markdown,
 		authorId,
 		status,
-		allowComment: 1,
-		allowPing: 1,
-		allowFeed: 1,
 	};
 
+	// 如果有分类（mid），则传递
+	if (categories.length > 0) {
+		payload.mid = categories.join(',');
+	}
+
 	try {
-		const response = await axios.post(
-			apiUrl('/api/v1/post'),
+		const response = await axios.post<TypechoApiResponse<number>>(
+			apiUrl('/api/post/create'),
 			payload,
-			{ headers }
+			{ headers },
 		);
-		if (response.status === 200 || response.status === 201) {
-			const cid = response.data?.cid || response.data?.data?.cid;
+		if (response.data?.status === 'success') {
+			const cid = response.data?.data;
 			new Notice('文章创建成功！', 5000);
 			return cid;
 		}
-		new Notice(`文章创建失败，状态码：${response.status}`, 5000);
+		new Notice(`文章创建失败: ${response.data?.message || '未知错误'}`, 5000);
 		return null;
 	} catch (error: any) {
 		const msg = error?.response?.data?.message || error?.message || '未知错误';
@@ -132,32 +115,30 @@ export async function updatePost(
 	cid: number,
 	title: string,
 	markdown: string,
-	tags: string[],
-	status: 'publish' | 'draft' = 'publish'
+	status: 'publish' | 'draft' = 'publish',
 ): Promise<boolean> {
 	const headers = apiHeaders();
-	const categories = getCategories();
+	const authorId = parseInt(getSetting('TYPECHO_UID')) || 1;
 
 	const payload = {
+		cid,
 		title,
-		markdown,
-		text: markdown,
-		category: categories,
-		tags,
+		text: '<!--markdown-->' + markdown,
+		authorId,
 		status,
 	};
 
 	try {
-		const response = await axios.put(
-			apiUrl(`/api/v1/post/${cid}`),
+		const response = await axios.post<TypechoApiResponse<number>>(
+			apiUrl('/api/post/create'),
 			payload,
-			{ headers }
+			{ headers },
 		);
-		if (response.status === 200) {
+		if (response.data?.status === 'success') {
 			new Notice('文章更新成功！', 5000);
 			return true;
 		}
-		new Notice(`文章更新失败，状态码：${response.status}`, 5000);
+		new Notice(`文章更新失败: ${response.data?.message || '未知错误'}`, 5000);
 		return false;
 	} catch (error: any) {
 		const msg = error?.response?.data?.message || error?.message || '未知错误';
@@ -169,53 +150,40 @@ export async function updatePost(
 
 // ─── Image upload ─────────────────────────────────────────────────
 
-/** Upload image to Typecho's built-in upload API, returns URL on success */
+/**
+ * 上传图片到 Typecho
+ *
+ * Typecho RESTful 插件没有提供图片上传端点。
+ * 这里通过 Typecho 内置的 action/upload 接口上传，
+ * 需要先进行 Cookie 认证（通过 curl 模拟登录）
+ *
+ * 当前简化实现：将图片复制到 usr/uploads/ 目录
+ * 完整实现需要走 Typecho 的 Cookie 认证流程
+ */
 export async function uploadImage(
-	app: any,
-	filePath: string
+	_app: any,
+	_filePath: string,
 ): Promise<string | null> {
-	const headers = {
-		'Authorization': `Bearer ${getSetting('TYPECHO_TOKEN')}`,
-	};
-
-	try {
-		const fileBuffer = await app.vault.adapter.readBinary(filePath);
-		const fileName = filePath.split('/').pop() || 'image.png';
-
-		const formData = new FormData();
-		const blob = new Blob([fileBuffer], { type: 'image/png' });
-		formData.append('file', blob, fileName);
-
-		const response = await axios.post(
-			apiUrl('/api/v1/upload'),
-			formData,
-			{ headers }
-		);
-
-		if (response.status === 200) {
-			// Typecho upload API typically returns { url: "..." } or { data: { url: "..." } }
-			return response.data?.url || response.data?.data?.url || null;
-		}
-		console.error('图片上传失败，状态码:', response.status);
-		return null;
-	} catch (error: any) {
-		console.error('图片上传失败:', error);
-		return null;
-	}
+	// 暂未实现。需要方案：
+	// 方案 A: PHP 后端 proxy，由服务端从 Obsidian 拉取图片后放入 usr/uploads/
+	// 方案 B: 在 Obsidian 端用 cookie 登录后 multipart POST 到 /index.php/action/upload
+	// 方案 C: 通过 WebDAV/SSH 直接写入 usr/uploads/ 目录
+	new Notice('图片上传暂未实现，将保留本地路径', 3000);
+	return null;
 }
 
 // ─── Category operations ──────────────────────────────────────────
 
-/** Get all categories */
+/** Get all categories with their mid */
 export async function getCategories_list(): Promise<TypechoCategory[]> {
 	const headers = apiHeaders();
 	try {
-		const response = await axios.get(
-			apiUrl('/api/v1/category'),
-			{ headers }
+		const response = await axios.get<TypechoApiResponse<TypechoCategory[]>>(
+			apiUrl('/api/category'),
+			{ headers },
 		);
-		if (response.status === 200) {
-			return response.data?.data || response.data || [];
+		if (response.data?.status === 'success') {
+			return response.data.data;
 		}
 		return [];
 	} catch (error) {
@@ -228,12 +196,12 @@ export async function getCategories_list(): Promise<TypechoCategory[]> {
 export async function getTags(): Promise<TypechoTag[]> {
 	const headers = apiHeaders();
 	try {
-		const response = await axios.get(
-			apiUrl('/api/v1/tag'),
-			{ headers }
+		const response = await axios.get<TypechoApiResponse<TypechoTag[]>>(
+			apiUrl('/api/tag'),
+			{ headers },
 		);
-		if (response.status === 200) {
-			return response.data?.data || response.data || [];
+		if (response.data?.status === 'success') {
+			return response.data.data;
 		}
 		return [];
 	} catch (error) {
@@ -242,11 +210,11 @@ export async function getTags(): Promise<TypechoTag[]> {
 	}
 }
 
-// ─── Main publish logic ───────────────────────────────────────────
+// ─── Image processing ─────────────────────────────────────────────
 
 /**
- * Process images in markdown content: upload local images and replace their URLs.
- * Returns the modified markdown content.
+ * 处理 Markdown 中的图片：上传本地图片，替换为远程 URL。
+ * 返回处理后的 Markdown 内容。
  */
 async function processImages(mdContent: string, mdPath: string, app: any): Promise<string> {
 	const imagePattern = /!\[(.*?)\]\((.*?)\)/g;
@@ -276,7 +244,6 @@ async function processImages(mdContent: string, mdPath: string, app: any): Promi
 		const uploadedUrl = await uploadImage(app, imagePath);
 
 		if (uploadedUrl) {
-			// Replace the local path with the uploaded URL
 			result = result.replace(fullMatch, `![${altText}](${uploadedUrl})`);
 		}
 	}
@@ -284,21 +251,22 @@ async function processImages(mdContent: string, mdPath: string, app: any): Promi
 	return result;
 }
 
+// ─── Main publish logic ───────────────────────────────────────────
+
 /**
- * Main entry: publish a markdown file from Obsidian vault to Typecho.
+ * 主入口：将 Obsidian 中的 Markdown 文件发布到 Typecho。
  */
 export async function post_md(mdPath: string, app: any): Promise<void> {
 	new Notice('开始发布文章到 Typecho...', 5000);
 
 	const mdContent = await app.vault.adapter.read(mdPath);
 
-	// Parse frontmatter using Obsidian's built-in API
+	// Parse frontmatter
 	let title = mdPath.split('/').pop()?.replace('.md', '') || '';
 	let tags: string[] = [];
 	let cid: number | null = null;
 	let status: 'publish' | 'draft' = getSetting('TYPECHO_DRAFT') ? 'draft' : 'publish';
 
-	// Use Obsidian's processFrontMatter to extract metadata
 	const frontmatterMatch = mdContent.match(/^---\n([\s\S]*?)\n---/);
 	if (frontmatterMatch) {
 		const yaml = frontmatterMatch[1];
@@ -320,7 +288,6 @@ export async function post_md(mdPath: string, app: any): Promise<void> {
 		const statusMatch = yaml.match(/^status:\s*(publish|draft|private)/m);
 		if (statusMatch) status = statusMatch[1] as 'publish' | 'draft';
 
-		// Check for draft flag in frontmatter
 		const draftMatch = yaml.match(/^draft:\s*(true|false)/m);
 		if (draftMatch && draftMatch[1] === 'true') status = 'draft';
 	}
@@ -335,7 +302,7 @@ export async function post_md(mdPath: string, app: any): Promise<void> {
 
 	if (cid) {
 		// ── Update existing post ──
-		const success = await updatePost(cid, title, processedBody, tags, status);
+		const success = await updatePost(cid, title, processedBody, status);
 		if (success) {
 			new Notice('文章发布成功！', 5000);
 		}
@@ -348,7 +315,6 @@ export async function post_md(mdPath: string, app: any): Promise<void> {
 			let updatedContent: string;
 
 			if (frontmatterMatch) {
-				// Append typecho_cid to existing frontmatter
 				const existingYaml = frontmatterMatch[1];
 				if (!existingYaml.includes('typecho_cid:')) {
 					const newYaml = existingYaml + `\ntypecho_cid: ${newCid}`;
@@ -357,7 +323,6 @@ export async function post_md(mdPath: string, app: any): Promise<void> {
 					updatedContent = originalContent;
 				}
 			} else {
-				// Create new frontmatter
 				const newFrontmatter = `---\ntitle: ${title}\ntypecho_cid: ${newCid}\ntags: []\n---\n`;
 				updatedContent = newFrontmatter + originalContent;
 			}

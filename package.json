@@ -1,6 +1,6 @@
 {
   "name": "md-to-typecho",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Publish Markdown notes from Obsidian to Typecho blog",
   "main": "main.js",
   "type": "module",
@@ -29,10 +29,5 @@
   },
   "dependencies": {
     "axios": "^1.8.4"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }
