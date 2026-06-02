@@ -167,15 +167,48 @@ export async function updatePost(
  * 完整实现需要走 Typecho 的 Cookie 认证流程
  */
 export async function uploadImage(
-	_app: any,
-	_filePath: string,
+	app: any,
+	filePath: string,
 ): Promise<string | null> {
-	// 暂未实现。需要方案：
-	// 方案 A: PHP 后端 proxy，由服务端从 Obsidian 拉取图片后放入 usr/uploads/
-	// 方案 B: 在 Obsidian 端用 cookie 登录后 multipart POST 到 /index.php/action/upload
-	// 方案 C: 通过 WebDAV/SSH 直接写入 usr/uploads/ 目录
-	new Notice('图片上传暂未实现，将保留本地路径', 3000);
-	return null;
+	const headers = {
+		'Content-Type': 'application/json',
+		'token': getSetting('TYPECHO_TOKEN'),
+	};
+
+	try {
+		// Read binary file
+		const buffer = await app.vault.adapter.readBinary(filePath);
+
+		// Convert to base64 for JSON payload
+		const bytes = new Uint8Array(buffer);
+		let binary = '';
+		for (let i = 0; i < bytes.length; i++) {
+			binary += String.fromCharCode(bytes[i]);
+		}
+		const base64 = btoa(binary);
+
+		const filename = filePath.split('/').pop() || 'image.png';
+
+		const response = await axios.post<TypechoApiResponse<{ url: string; name: string; size: number; mime: string }>>(
+			apiUrl('/api/upload'),
+			{ image: base64, filename },
+			{ headers },
+		);
+
+		if (response.data?.status === 'success' && response.data.data?.url) {
+			console.log(`Image uploaded: ${response.data.data.url}`);
+			return response.data.data.url;
+		}
+
+		console.error('Upload failed:', response.data);
+		return null;
+	} catch (error: any) {
+		console.error('Image upload error:', error?.message);
+		if (error?.response?.data) {
+			console.error('Response:', error.response.data);
+		}
+		return null;
+	}
 }
 
 // ─── Category operations ──────────────────────────────────────────
